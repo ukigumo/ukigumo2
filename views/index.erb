@@ -1,0 +1,51 @@
+<!doctype html>
+<html>
+    <head>
+        <link rel="stylesheet" href="/public/bootstrap.min.css">
+        <style>
+            .status_fail {
+                color: red;
+                font-weight: bold;
+            }
+            .status_ok {
+                color: green;
+                font-weight: bold;
+            }
+            a {
+                color: #ddddee;
+            }
+            a:hover {
+                text-decoration: none;
+            }
+        </style>
+    </head>
+    <body>
+        <div class="container">
+            <h1>Ukigumo2</h1>
+        </div>
+        <hr>
+        <div class="container">
+            <div class="row">
+                <div class="col-md-3">
+                    <% if @jobs.length == 0 %>
+                        There is no jobs, yet.
+                    <% end %>
+                    <% @jobs.each do |job| %>
+                        <a href="/result/<%= job[:uuid] %>">
+                            <p>[<span class="status_<%= job[:status].downcase %>"><%= job[:status] %></span>] <%= job[:repository].gsub(%r{^https://github.com/}, '').gsub(/\.git$/, '') %></p>
+                            <p><%= job[:branch] %></p>
+                        <p><%= Time.at(job[:created_on]).strftime("%Y-%m-%d %H:%M") %></p>
+                        </a>
+                        <hr>
+                    <% end %>
+                </div>
+                <div class="col-md-9">
+                    <% if @mainjob %>
+                        <h2>[<span class="status_<%= @mainjob[:status].downcase %>"><%= @mainjob[:status] %></span>] <%= @mainjob[:repository] %><span style="color:#cccccc">@</span><%= @mainjob[:branch] %></h2>
+                        <pre><%= @mainjob[:log] %></pre>
+                    <% end %>
+                </div>
+            </div>
+        </div>
+    </body>
+</html>

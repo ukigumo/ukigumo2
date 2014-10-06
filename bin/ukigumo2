@@ -1,0 +1,287 @@
+#!/usr/bin/env ruby
+
+require 'sinatra/base'
+require 'json'
+require 'thread'
+require "sequel"
+require 'logger'
+require 'fileutils'
+require 'timeout'
+require "sinatra/json"
+require 'yaml'
+require 'open3'
+
+STDOUT.sync = true
+
+$log_dir = ENV['HOME'] + "/.ukigumo2/logs/"
+FileUtils.mkdir_p($log_dir)
+# TODO: $log_dir の古いやつは順次消す
+
+# initializing database.
+DB = Sequel.sqlite
+DB.loggers << Logger.new($stdout)
+
+DB.run(<<'...')
+CREATE TABLE jobs (
+  id INTEGER PRIMARY KEY NOT NULL,
+  uuid VARCHAR(255) NOT NULL,
+  repository VARCHAR(255) NOT NULL,
+  branch VARCHAR(255) NOT NULL,
+  status VARCHAR(255) NOT NULL DEFAULT "WAITING",
+  created_on INTEGER NOT NULL,
+  UNIQUE (uuid)
+)
+...
+
+module Ukigumo2
+  @@job_queue = Queue.new
+  @@job_timeout = 180 # [sec]
+
+  def self.job_timeout=(secs)
+    @@job_timeout=secs
+  end
+
+  def self.job_timeout
+    @@job_timeout
+  end
+
+  def self.job_queue
+    @@job_queue
+  end
+
+  def self.start_workers(max_threads)
+    # setup worker threads.
+    @@threads = (1..max_threads).map do |i|
+      Thread.new do
+        puts "Started thread #{i}"
+        loop {
+          begin
+            job = @@job_queue.pop
+            job.work
+          rescue Exception => e
+            puts e
+            puts e.backtrace
+          end
+        }
+      end
+    end
+  end
+
+  class Web < Sinatra::Application
+    require 'erubis'
+    set :erb, :escape_html => true
+    set :views, File.absolute_path(File.join(File.dirname(__FILE__), "../views"))
+    public_dir = File.absolute_path(File.join(File.dirname(__FILE__), "../public"))
+
+    get '/' do
+      @jobs = DB[:jobs].reverse_order(:id).limit(200).all
+      erb :index
+    end
+
+    get %r{/result/([0-9a-zA-Z_-]+)} do |uuid|
+      @jobs = DB[:jobs].reverse_order(:id).limit(200).all
+      @mainjob = DB[:jobs].where(:uuid => uuid).first
+      @mainjob[:log] = Job.read_log(uuid)
+      erb :index
+    end
+
+    get '/public/bootstrap.min.css' do
+      content_type 'text/css'
+      File.read(File.join(public_dir, "bootstrap.min.css"))
+    end
+
+    get '/api/jobs' do
+      json :rows => DB[:jobs].reverse_order(:id).limit(200).all
+    end
+
+    get %r{/api/log/([0-9a-zA-Z_-]+)} do |uuid|
+      Job.read_log(uuid)
+    end
+
+    # receive github pages.
+    post '/api/payload' do
+      # TODO: implement here.
+      push = JSON.parse(request.body.read)
+      puts "I got some JSON: #{push.inspect}"
+    end
+
+    get '/api/enqueue' do
+      repo = params[:repository]
+      branch = params[:branch] || 'master'
+      raise "Missing repository parameter" unless repo
+      raise "Missing repository parameter" unless repo.length > 0
+      Ukigumo2.job_queue.push(Job.new(repo, branch))
+    end
+
+    # You can post the testing result from cron.
+    post '/api/post' do
+      repo = params[:repository]
+      branch = params[:branch] || 'master'
+      status = params[:status]
+      log = params[:log]
+      raise "Missing repository parameter" unless repo
+      raise "Missing repository parameter" unless repo.length > 0
+      uuid = Job.post(repo, branch, status, log)
+      json :uuid => uuid
+    end
+  end
+
+  # job class
+  class Job
+    def initialize(repository, branch)
+      @repository = repository
+      @branch = branch
+
+      @uuid = SecureRandom.uuid
+      @logfilename = "#{$log_dir}/#{@uuid}.log"
+      @row = DB[:jobs].insert(
+        :uuid => @uuid,
+        :repository => repository,
+        :branch => branch,
+        :created_on => Time.now.to_i,
+        )
+    end
+
+    def self.read_log(uuid)
+      begin
+        File.read("#{$log_dir}/#{uuid}.log")
+      rescue Exception => e
+        nil
+      end
+    end
+
+    def self.post(repository, branch, status, log)
+      uuid = SecureRandom.uuid
+      logfilename = "#{$log_dir}/#{uuid}.log"
+
+      @row = DB[:jobs].insert(
+        :uuid => uuid,
+        :repository => repository,
+        :branch => branch,
+        :status => status,
+        :created_on => Time.now.to_i,
+        )
+      File.write(logfilename, log)
+      return uuid
+    end
+
+    def log
+      unless @log
+        @log = File.open(@logfilename, 'w')
+        @log.sync = true
+      end
+      @log
+    end
+
+    def logputs(*args)
+      STDOUT.puts *args
+      log.puts(*args)
+    end
+
+    def runcmd(*cmd)
+      logputs "\n>>>> " + JSON.dump(cmd)
+
+      IO.popen(cmd + [:err=>[:child, :out]]) {|io|
+        io.each do |line|
+          logputs line
+        end
+      }
+
+      return $?.exited? && $?.exitstatus == 0
+    end
+
+    def runcmd2(workdir, *cmd)
+      logputs "\n>>>> " + JSON.dump(cmd)
+
+      status = Open3.popen2e(*cmd, :chdir => workdir) {|stdin, stdout_and_stderr, wait_thr|
+        stdin.close
+
+        stdout_and_stderr.each do |line|
+          logputs line
+        end
+        exit_status = wait_thr.value
+      }
+
+      return status.exited? && status.exitstatus == 0
+    end
+
+    def work
+      status = 'WORKING'
+      configuration = {}
+      DB[:jobs].where(:uuid => @uuid).update(:status => 'WORKING')
+
+      begin
+        Timeout::timeout(Ukigumo2.job_timeout) do
+          logputs "Started job at '#{Time.now}'"
+
+
+          Dir.mktmpdir do |workdir|
+            runcmd("git", "clone", '--recursive', '--branch', @branch, @repository, workdir) or fail "Cannot clone repo"
+
+            configuration = if File.exists?("#{workdir}/.ukigumo2.yml")
+                              YAML.load(File.read("#{workdir}/.ukigumo2.yml"))
+                            else
+                              {}
+                            end
+
+            if File.exists?("#{workdir}/Makefile.PL")
+              configuration['before_script'] ||= [
+                ['cpanm', '--installdeps', '.'],
+                ['perl', 'Makefile.PL']]
+              configuration['script'] ||= ['make', 'test']
+            elsif File.exists?("#{workdir}/Build.PL")
+              configuration['before_script'] ||= [
+                ['cpanm', '--installdeps', '.'],
+                ['perl', 'Build.PL'],
+                ['./Build']]
+              configuration['script'] ||= ['./Build', 'test']
+            elsif File.exists?("#{workdir}/pom.xml")
+              configuration['before_script'] ||= []
+              configuration['script'] ||= ['mvn', 'test']
+            else
+              unless configuration['script']
+                fail "I can't detect project type. You should set 'script' in .ukigumo2.yml"
+              end
+            end
+
+            if configuration['before_script']
+              configuration['before_script'].each do |cmd|
+                runcmd2(workdir, *cmd) or fail "Cannot do #{cmd}"
+              end
+            end
+            runcmd2(workdir, *configuration['script']) or fail configuration['script']
+          end
+          logputs "Finished job at '#{Time.now}'"
+
+          status = 'OK'
+        end
+      rescue Exception => e
+        logputs e
+        puts e.backtrace
+        status = 'FAIL'
+      end
+
+      DB[:jobs].where(:uuid => @uuid).update(:status => status)
+
+      if configuration['notifications']
+        configuration['notifications'].each do |conf|
+          notify(status, conf)
+        end
+      end
+    end
+
+    def notify(status, conf)
+      case conf['type']
+      when 'ikasan'
+        notify_ikasan(status, conf)
+      else
+        logputs("Unknown notification type: #{conf['type']}")
+        DB[:jobs].where(:uuid => @uuid).update(:status => "BAD_CONFIG")
+      end
+    end
+  end
+end
+
+puts ENV['PATH']
+Ukigumo2.start_workers(1)
+Ukigumo2::Web.run!
