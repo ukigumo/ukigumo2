@@ -1,6 +1,8 @@
 # Ukigumo2
 
-Ukigumo2 is a yet another lightweight CI server
+Ukigumo2 is a super lightweight CI server
+
+<img src="https://raw.githubusercontent.com/ukigumo/ukigumo2/master/docs/screenshot.png">
 
 ## Installation
 
