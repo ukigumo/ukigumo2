@@ -4,27 +4,25 @@ Ukigumo2 is a super lightweight CI server
 
 <img src="https://raw.githubusercontent.com/ukigumo/ukigumo2/master/docs/screenshot.png">
 
+## How do I use this?
+
+Run the ukigumo2 server.
+
+    $ ./bin/ukigumo2
+
+You can register job by HTTP API.
+
+    $ curl http://localhost:4567/api/enqueue\?repository=https://github.com/miyagawa/Acme-YakiniQ.git
+
+Worker thread executes your application... You can look the execution result on the web.
+
 ## Installation
 
-<B>Not in rubygems.org, yet.</B>
-
-Add this line to your application's Gemfile:
-
-```ruby
-gem 'ukigumo2'
-```
-
-And then execute:
-
-    $ bundle
-
-Or install it yourself as:
-
-    $ gem install ukigumo2
-
-## Usage
-
-    $ ruby ukigumo2.rb
+    $ git clone https://github.com/ukigumo/ukigumo2.git
+    $ cd ukigumo2
+    $ gem install bundler
+    $ bundle install
+    $ bundle exec ./bin/ukigumo2
 
 ## Contributing
 
