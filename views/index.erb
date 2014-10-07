@@ -1,6 +1,8 @@
 <!doctype html>
 <html>
     <head>
+        <meta charset=utf8>
+        <title>Ukigumo2</title>
         <link rel="stylesheet" href="/public/bootstrap.min.css">
         <style>
             .status_fail {
@@ -17,6 +19,9 @@
             a:hover {
                 text-decoration: none;
             }
+            .main-row {
+                min-height: 400px;
+            }
         </style>
     </head>
     <body>
@@ -25,7 +30,7 @@
         </div>
         <hr>
         <div class="container">
-            <div class="row">
+            <div class="row main-row">
                 <div class="col-md-3">
                     <% if @jobs.length == 0 %>
                         There is no jobs, yet.
@@ -42,8 +47,31 @@
                 <div class="col-md-9">
                     <% if @mainjob %>
                         <h2>[<span class="status_<%= @mainjob[:status].downcase %>"><%= @mainjob[:status] %></span>] <%= @mainjob[:repository] %><span style="color:#cccccc">@</span><%= @mainjob[:branch] %></h2>
+                        <table>
+                            <tr>
+                                <th>Compare URL</th>
+                                <td><a href="<%= @mainjob[:compare_url] %>"><%= @mainjob[:compare_url] %></a></td>
+                            </tr>
+                        </table>
                         <pre><%= @mainjob[:log] %></pre>
+                        <p style="text-align: right">
+                            <% if @mainjob[:status] == 'OK' %>
+                                <img src="/public/ukigumo-chan.png">
+                            <% else %>
+                                <img src="/public/ukigumo-chan-angry.png">
+                            <% end %>
+                        </p>
                     <% end %>
+                </div>
+            </div>
+            <hr>
+            <div class="row">
+                <div class="col-md-12">
+                    <h2>Usage</h2>
+                    <p>Call me with curl</p>
+                    <pre>curl <%= @base_url %>/api/enqueue\?repository=git@github.com:tokuhirom/Acme-Kensiro.git&amp;branch=master</pre>
+                    <p>or regiser this URL for github webhooks</p>
+                    <pre>curl <%= @base_url %>/api/github</pre>
                 </div>
             </div>
         </div>

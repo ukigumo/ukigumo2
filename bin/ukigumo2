@@ -27,6 +27,10 @@ CREATE TABLE jobs (
   uuid VARCHAR(255) NOT NULL,
   repository VARCHAR(255) NOT NULL,
   branch VARCHAR(255) NOT NULL,
+  compare_url VARCHAR(65535) DEFAULT NULL,
+  repository_owner VARCHAR(65535) DEFAULT NULL,
+  repository_name VARCHAR(65535) DEFAULT NULL,
+  payload TEXT DEFAULT NULL,
   status VARCHAR(255) NOT NULL DEFAULT "WAITING",
   created_on INTEGER NOT NULL,
   UNIQUE (uuid)
@@ -75,19 +79,35 @@ module Ukigumo2
 
     get '/' do
       @jobs = DB[:jobs].reverse_order(:id).limit(200).all
+      @base_url = request.base_url
       erb :index
     end
 
     get %r{/result/([0-9a-zA-Z_-]+)} do |uuid|
       @jobs = DB[:jobs].reverse_order(:id).limit(200).all
       @mainjob = DB[:jobs].where(:uuid => uuid).first
+      halt 404 unless @mainjob
       @mainjob[:log] = Job.read_log(uuid)
+      @base_url = request.base_url
       erb :index
     end
 
+    # FIXME: silly hard coding.
+    # hmm... sinara doesn't handle public directory correctly.
+    # please help us
     get '/public/bootstrap.min.css' do
       content_type 'text/css'
       File.read(File.join(public_dir, "bootstrap.min.css"))
+    end
+
+    get '/public/ukigumo-chan.png' do
+      content_type 'image/png'
+      File.read(File.join(public_dir, "ukigumo-chan.png"))
+    end
+
+    get '/public/ukigumo-chan-angry.png' do
+      content_type 'image/png'
+      File.read(File.join(public_dir, "ukigumo-chan-angry.png"))
     end
 
     get '/api/jobs' do
@@ -99,10 +119,34 @@ module Ukigumo2
     end
 
     # receive github pages.
-    post '/api/payload' do
-      # TODO: implement here.
-      push = JSON.parse(request.body.read)
-      puts "I got some JSON: #{push.inspect}"
+    post '/api/github' do
+      payload = request.body.read
+      push = JSON.parse(payload)
+      puts "I got JSON from github: #{push.inspect}"
+
+      if push['deleted']
+        puts "'deleted' was found. I should'nt care this request."
+        return "OK"
+      end
+
+      ref = push['ref']
+      repo_url = push['repository']['ssh_url']
+
+      branch = if ref =~ %r{\Arefs/heads/(.+)}
+                 $1
+               elsif ref =~ %r{\Arefs/tags/(.+)}
+                 $1
+               else
+                 'master'
+               end
+
+      Ukigumo2.job_queue.push(Job.new(
+        repository:repo_url,
+        branch:branch||tag,
+        compare_url:push['compare'],
+        repository_owner: push['repository']['owner']['name'],
+        repository_name: push['repository']['name'],
+        payload: payload))
     end
 
     get '/api/enqueue' do
@@ -110,7 +154,7 @@ module Ukigumo2
       branch = params[:branch] || 'master'
       raise "Missing repository parameter" unless repo
       raise "Missing repository parameter" unless repo.length > 0
-      Ukigumo2.job_queue.push(Job.new(repo, branch))
+      Ukigumo2.job_queue.push(Job.new(repository:repo, branch:branch))
     end
 
     # You can post the testing result from cron.
@@ -128,9 +172,11 @@ module Ukigumo2
 
   # job class
   class Job
-    def initialize(repository, branch)
+    def initialize(repository:nil, branch:'master', compare_url: nil, repository_owner: nil, repository_name: nil, payload: nil)
+      fail if repository.nil?
+
       @repository = repository
-      @branch = branch
+      @branch = branch || 'master'
 
       @uuid = SecureRandom.uuid
       @logfilename = "#{$log_dir}/#{@uuid}.log"
@@ -138,6 +184,10 @@ module Ukigumo2
         :uuid => @uuid,
         :repository => repository,
         :branch => branch,
+        :compare_url => compare_url,
+        :repository_owner => repository_owner,
+        :repository_name => repository_name,
+        :payload => payload,
         :created_on => Time.now.to_i,
         )
     end
