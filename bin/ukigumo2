@@ -10,6 +10,7 @@ require 'timeout'
 require "sinatra/json"
 require 'yaml'
 require 'open3'
+require 'openssl'
 
 STDOUT.sync = true
 
@@ -40,6 +41,14 @@ CREATE TABLE jobs (
 module Ukigumo2
   @@job_queue = Queue.new
   @@job_timeout = 180 # [sec]
+
+  def self.secret=(secret)
+    @@secret=secret
+  end
+
+  def self.secret
+    @@secret
+  end
 
   def self.job_timeout=(secs)
     @@job_timeout=secs
@@ -121,6 +130,18 @@ module Ukigumo2
     # receive github pages.
     post '/api/github' do
       payload = request.body.read
+
+      # I guess there is a better way to handle this.
+      calc_sig = OpenSSL::HMAC::hexdigest(OpenSSL::Digest::SHA1.new, Ukigumo2.secret, payload)
+      header_sig = request.env['HTTP_X_HUB_SIGNATURE']
+      if header_sig =~ /^sha1=(.*)/
+        header_sig = $1
+        if calc_sig != header_sig
+          puts "Bad signature: #{calc_sig} != #{header_sig}"
+          halt 403
+        end
+      end
+
       push = JSON.parse(payload)
       puts "I got JSON from github: #{push.inspect}"
 
@@ -128,6 +149,7 @@ module Ukigumo2
         puts "'deleted' was found. I should'nt care this request."
         return "OK"
       end
+
 
       ref = push['ref']
       repo_url = push['repository']['ssh_url']
@@ -152,6 +174,11 @@ module Ukigumo2
     get '/api/enqueue' do
       repo = params[:repository]
       branch = params[:branch] || 'master'
+      if params[:secret] != Ukigumo2.secret
+        puts "Bad secret : #{params[:secret]}"
+        halt 403
+      end
+
       raise "Missing repository parameter" unless repo
       raise "Missing repository parameter" unless repo.length > 0
       Ukigumo2.job_queue.push(Job.new(repository:repo, branch:branch))
@@ -163,6 +190,7 @@ module Ukigumo2
       branch = params[:branch] || 'master'
       status = params[:status]
       log = params[:log]
+
       raise "Missing repository parameter" unless repo
       raise "Missing repository parameter" unless repo.length > 0
       uuid = Job.post(repo, branch, status, log)
@@ -329,7 +357,18 @@ module Ukigumo2
         DB[:jobs].where(:uuid => @uuid).update(:status => "BAD_CONFIG")
       end
     end
+
+    def notify_ikasan
+      fail 'NIY'
+    end
   end
+end
+
+Ukigumo2.secret = ENV['UKIGUMO_SECRET']
+
+if Ukigumo2.secret.nil? || Ukigumo2.secret !~ /\S/
+  puts "Missing ENV{UKIGUMO_SECRET}"
+  exit 1
 end
 
 puts ENV['PATH']

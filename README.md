@@ -8,7 +8,7 @@ Ukigumo2 is a super lightweight CI server
 
 Run the ukigumo2 server.
 
-    $ ./bin/ukigumo2
+    $ UKIGUMO_SECRET=s3c4et RACK_ENV=production PORT=20080 bundle exec bin/ukigumo2
 
 You can register job by HTTP API.
 

@@ -69,9 +69,10 @@
                 <div class="col-md-12">
                     <h2>Usage</h2>
                     <p>Call me with curl</p>
-                    <pre>curl <%= @base_url %>/api/enqueue\?repository=git@github.com:tokuhirom/Acme-Kensiro.git&amp;branch=master</pre>
+                    <pre>curl <%= @base_url %>/api/enqueue\?repository=git@github.com:tokuhirom/Acme-Kensiro.git&amp;branch=master&amp;secret=YOUR_SECRET_HERE</pre>
                     <p>or regiser this URL for github webhooks</p>
                     <pre>curl <%= @base_url %>/api/github</pre>
+                    <p>(Note, you need to set YOUR_SECRET to the github webhook's secret.)</p>
                 </div>
             </div>
         </div>
