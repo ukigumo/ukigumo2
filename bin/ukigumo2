@@ -39,6 +39,15 @@ CREATE TABLE jobs (
 ...
 
 module Ukigumo2
+  class Context
+    attr_accessor :force_git
+  end
+end
+
+context = Ukigumo2::Context.new
+$context = context
+
+module Ukigumo2
   @@job_queue = Queue.new
   @@job_timeout = 180 # [sec]
 
@@ -152,7 +161,12 @@ module Ukigumo2
 
 
       ref = push['ref']
-      repo_url = push['repository']['ssh_url']
+      repo_url = push['repository']['url']
+      if $context.force_git
+        # From: https://github.com/tokuhirom/plenv.git
+        # To: git@github.com:tokuhirom/plenv.git
+        repo_url.gsub!(%r!\Ahttps?://([^/]+)/!, "git@\\1:");
+      end
 
       branch = if ref =~ %r{\Arefs/heads/(.+)}
                  $1
@@ -163,12 +177,12 @@ module Ukigumo2
                end
 
       Ukigumo2.job_queue.push(Job.new(
-        repository:repo_url,
-        branch:branch||tag,
-        compare_url:push['compare'],
+        repository:       repo_url,
+        branch:           branch||tag,
+        compare_url:      push['compare'],
         repository_owner: push['repository']['owner']['name'],
-        repository_name: push['repository']['name'],
-        payload: payload))
+        repository_name:  push['repository']['name'],
+        payload:          payload))
     end
 
     get '/api/enqueue' do
@@ -201,7 +215,7 @@ module Ukigumo2
   # job class
   class Job
     def initialize(repository:nil, branch:'master', compare_url: nil, repository_owner: nil, repository_name: nil, payload: nil)
-      fail if repository.nil?
+      fail "Missing repsotiry parameter" if repository.nil?
 
       @repository = repository
       @branch = branch || 'master'
@@ -365,6 +379,8 @@ module Ukigumo2
 end
 
 Ukigumo2.secret = ENV['UKIGUMO_SECRET']
+
+context.force_git = true
 
 if Ukigumo2.secret.nil? || Ukigumo2.secret !~ /\S/
   puts "Missing ENV{UKIGUMO_SECRET}"
